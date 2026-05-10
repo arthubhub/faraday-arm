@@ -1,66 +1,56 @@
-x-faraday-image: &faraday-image index.docker.io/faradaysec/faraday:latest  # Use official image from Docker Hub registry or, see below for local development
-# x-faraday-image: &faraday-image faraday-local  # For local development, use local image built with `docker-compose build faraday-server`
-
+x-faraday-image: &faraday-image faraday-local:latest
 x-faraday-volumes: &faraday-volumes
-  - "faraday:/home/faraday/.faraday:rw"  # by default, store data in a Docker volume.
-  # - "$HOME/.faraday:/home/faraday/.faraday:rw"  # Uncomment to use your whole existing `.faraday` folder. Remember to comment the volume above.
-  # - "path_to/faraday/cloned/repo:/src"  # Uncomment and adjust path to your local faraday source code directory if you want to use a local development version.
+  - "faraday:/home/faraday/.faraday:rw"
+
+networks:
+  proxy:
+    external: true
+  faradaynet:
+    name: faradaynet
 
 services:
   db:
     image: postgres:12.7-alpine
-    restart: always
     container_name: faraday_db
+    restart: always
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=faraday
-    ports:
-      - '5432'
     volumes:
       - "db:/var/lib/postgresql/data:rw"
+    networks: [faradaynet]
+
   redis:
-    image: 'redis:8.4-alpine'
+    image: redis:8.4-alpine
     container_name: faraday_redis
-    ports:
-      - '6379'
+    restart: always
+    networks: [faradaynet]
+
   change-password:
     image: *faraday-image
     profiles: ["manual"]
     command: ["faraday-manage", "change-password"]
     volumes: *faraday-volumes
-    depends_on:
-      - db
+    networks: [faradaynet]
+    depends_on: [db]
+
   faraday-manage:
     image: *faraday-image
-    profiles: [ "manual" ]
-    command: [ "faraday-manage" ]
+    profiles: ["manual"]
+    command: ["faraday-manage"]
     volumes: *faraday-volumes
-    depends_on:
-      - db
-  faraday-default-worker:
-    image: *faraday-image
-    restart: always
-    container_name: faraday_worker
-    command: [ "faraday-worker" ]
-    volumes: *faraday-volumes
-    environment:
-      - PGSQL_USER=postgres
-      - PGSQL_PASSWD=postgres
-      - PGSQL_HOST=db
-      - PGSQL_DBNAME=faraday
-      - REDIS_SERVER=redis
-    depends_on:
-      faraday-server:
-        condition: service_healthy
+    networks: [faradaynet]
+    depends_on: [db]
+
   faraday-server:
     build:
       context: .
       # args:
-      #  - DEV_ENV= 1  # uncomment to use local code source
+      #   - DEV_ENV=1
     image: *faraday-image
-    restart: always
     container_name: faraday_server
+    restart: always
     entrypoint: "/entrypoint.sh"
     volumes: *faraday-volumes
     environment:
@@ -69,16 +59,43 @@ services:
       - PGSQL_HOST=db
       - PGSQL_DBNAME=faraday
       - REDIS_SERVER=redis
-    depends_on:
-     - db
-     - redis
-    ports:
-     - "5985:5985"
+    depends_on: [db, redis]
+    networks:
+      faradaynet: {}
+      proxy:
+        ipv4_address: 172.19.0.11
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5985/_api/config"]
       interval: 20s
       timeout: 5s
       retries: 10
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.faraday.rule=Host(`faraday.arthurbidet.fr`)
+      - traefik.http.routers.faraday.entrypoints=https
+      - traefik.http.routers.faraday.tls=true
+      - traefik.http.routers.faraday.tls.certresolver=production
+      - traefik.http.routers.faraday.middlewares=authelia@docker
+      - traefik.http.services.faraday.loadbalancer.server.port=5985
+
+  faraday-default-worker:
+    image: *faraday-image
+    container_name: faraday_worker
+    restart: always
+    command: ["faraday-worker"]
+    volumes: *faraday-volumes
+    environment:
+      - PGSQL_USER=postgres
+      - PGSQL_PASSWD=postgres
+      - PGSQL_HOST=db
+      - PGSQL_DBNAME=faraday
+      - REDIS_SERVER=redis
+    networks: [faradaynet]
+    depends_on:
+      faraday-server:
+        condition: service_healthy
+
 volumes:
   db:
     driver: local
