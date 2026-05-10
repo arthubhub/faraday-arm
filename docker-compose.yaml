@@ -77,6 +77,14 @@ services:
       - traefik.http.routers.faraday.tls=true
       - traefik.http.routers.faraday.tls.certresolver=production
       - traefik.http.routers.faraday.middlewares=authelia@docker
+
+      - traefik.http.routers.faraday-api.rule=Host(`faraday.arthurbidet.fr`) && PathPrefix(`/_api/`)
+      - traefik.http.routers.faraday-api.entrypoints=https
+      - traefik.http.routers.faraday-api.tls=true
+      - traefik.http.routers.faraday-api.tls.certresolver=production
+      - traefik.http.routers.faraday-api.priority=100
+      - traefik.http.routers.faraday-api.service=faraday
+      
       - traefik.http.services.faraday.loadbalancer.server.port=5985
 
   faraday-default-worker:
